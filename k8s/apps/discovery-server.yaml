@@ -44,10 +44,18 @@ spec:
             periodSeconds: 15
             timeoutSeconds: 5
           env:
-            - name: SPRING_CLOUD_CONFIG_URI
-              value: http://config-server:8888
+            - name: SERVER_PORT
+              value: "8761"
+            - name: SPRING_CONFIG_IMPORT
+              value: optional:configserver:http://config-server:8888
             - name: SPRING_PROFILES_ACTIVE
               value: default
+            - name: EUREKA_CLIENT_REGISTER_WITH_EUREKA
+              value: "false"
+            - name: EUREKA_CLIENT_FETCH_REGISTRY
+              value: "false"
+            - name: EUREKA_CLIENT_SERVICEURL_DEFAULTZONE
+              value: http://discovery-server:8761/eureka
 ---
 apiVersion: v1
 kind: Service

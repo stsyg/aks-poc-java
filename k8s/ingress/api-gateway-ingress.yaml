@@ -14,7 +14,7 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "120"
 spec:
-  ingressClassName: webapprouting-nginx
+  ingressClassName: webapprouting.kubernetes.azure.com
   rules:
     - http:
         paths:

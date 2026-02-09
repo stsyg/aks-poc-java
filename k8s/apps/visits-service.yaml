@@ -44,8 +44,10 @@ spec:
             periodSeconds: 15
             timeoutSeconds: 5
           env:
-            - name: SPRING_CLOUD_CONFIG_URI
-              value: http://config-server:8888
+            - name: SERVER_PORT
+              value: "8082"
+            - name: SPRING_CONFIG_IMPORT
+              value: optional:configserver:http://config-server:8888
             - name: SPRING_PROFILES_ACTIVE
               value: default
             - name: EUREKA_CLIENT_SERVICEURL_DEFAULTZONE

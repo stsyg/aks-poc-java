@@ -31,6 +31,7 @@ if [[ ! -f "$ENV_FILE" ]]; then
     exit 1
 fi
 source "$ENV_FILE"
+export ACR_NAME
 
 # --- Validate ---
 if [[ -z "${ACR_NAME:-}" ]]; then
