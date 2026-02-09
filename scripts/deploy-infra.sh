@@ -54,6 +54,7 @@ IDENTITY_NAME="aks-poc-java-id-${RANDOM_SUFFIX}"
 LOAD_TEST_NAME="aks-poc-lt-${RANDOM_SUFFIX}"
 NAT_GW_NAME="aks-poc-natgw-${RANDOM_SUFFIX}"
 NAT_GW_PIP_NAME="aks-poc-natgw-pip-${RANDOM_SUFFIX}"
+NSG_NAME="aks-poc-nsg-${RANDOM_SUFFIX}"
 AKS_SUBNET_NAME="aks-poc-${RANDOM_SUFFIX}"
 AKS_SUBNET_PREFIX="192.167.224.0/24"
 
@@ -65,6 +66,7 @@ echo "    AKS Cluster:       $CLUSTER_NAME"
 echo "    ACR:               $ACR_NAME"
 echo "    Managed Identity:  $IDENTITY_NAME"
 echo "    Load Test:         $LOAD_TEST_NAME"
+echo "    NSG:               $NSG_NAME"
 echo "    AKS Subnet:        $AKS_SUBNET_NAME ($AKS_SUBNET_PREFIX)"
 echo ""
 
@@ -119,7 +121,7 @@ echo ">>> Waiting for image imports to complete..."
 sleep 30
 
 # =============================================================================
-# 4. Create NAT Gateway, Public IP, and subnet in existing VNet
+# 4. Create NAT Gateway, NSG, and subnet in existing VNet
 # =============================================================================
 echo ">>> Checking for available subnet range in $VNET_NAME..."
 echo "    Existing subnets:"
@@ -152,6 +154,33 @@ NAT_GW_ID=$(az network nat gateway show \
     --name "$NAT_GW_NAME" \
     --query id --output tsv)
 
+echo ">>> Creating NSG: $NSG_NAME"
+az network nsg create \
+    --resource-group "$RG_NAME" \
+    --name "$NSG_NAME" \
+    --location "$LOCATION" \
+    --tags $TAGS \
+    --output none
+
+echo ">>> Adding NSG rule: allow inbound HTTP/HTTPS from Internet"
+az network nsg rule create \
+    --resource-group "$RG_NAME" \
+    --nsg-name "$NSG_NAME" \
+    --name "AllowHTTP_HTTPS_Inbound" \
+    --priority 100 \
+    --direction Inbound \
+    --access Allow \
+    --protocol Tcp \
+    --source-address-prefixes Internet \
+    --destination-address-prefixes "*" \
+    --destination-port-ranges 80 443 \
+    --output none
+
+NSG_ID=$(az network nsg show \
+    --resource-group "$RG_NAME" \
+    --name "$NSG_NAME" \
+    --query id --output tsv)
+
 echo ">>> Creating subnet: $AKS_SUBNET_NAME ($AKS_SUBNET_PREFIX)"
 echo "    NOTE: If this prefix conflicts with an existing subnet, edit AKS_SUBNET_PREFIX in this script."
 az network vnet subnet create \
@@ -160,6 +189,7 @@ az network vnet subnet create \
     --name "$AKS_SUBNET_NAME" \
     --address-prefixes "$AKS_SUBNET_PREFIX" \
     --nat-gateway "$NAT_GW_ID" \
+    --network-security-group "$NSG_ID" \
     --output none
 
 SUBNET_ID=$(az network vnet subnet show \
@@ -273,6 +303,8 @@ ACR_NAME=$ACR_NAME
 IDENTITY_NAME=$IDENTITY_NAME
 LOAD_TEST_NAME=$LOAD_TEST_NAME
 AKS_SUBNET_NAME=$AKS_SUBNET_NAME
+NSG_NAME=$NSG_NAME
+NSG_ID=$NSG_ID
 IDENTITY_ID=$IDENTITY_ID
 IDENTITY_PRINCIPAL_ID=$IDENTITY_PRINCIPAL_ID
 SUBNET_ID=$SUBNET_ID
