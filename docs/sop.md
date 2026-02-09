@@ -221,6 +221,15 @@ Verify weight in each node pool. With bigger weight, i.e. 50, that nodepool will
 kubectl get nodepools.karpenter.sh -o custom-columns='NAME:.metadata.name,WEIGHT:.spec.weight,CPU-LIMIT:.spec.limits.cpu,MEMORY-LIMIT:.spec.limits.memory,NODECLASS:.spec.template.spec.nodeClassRef.name,READY:.status.conditions[?(@.type=="Ready")].status'
 ```
 
+Expected:
+```
+NAME            WEIGHT   CPU-LIMIT   MEMORY-LIMIT   NODECLASS      READY
+burst-pool      10       16          64Gi           default        True
+default         <none>   <none>      <none>         default        True
+system-surge    <none>   <none>      <none>         system-surge   True
+workload-pool   50       16          64Gi           default        True
+```
+
 ### 4.3 Clarification of the NodePools
 
 `default` — NAP's catch-all pool. If no other pool can satisfy a pending pod (e.g., your custom pools hit their CPU limits), this pool handles it. No weight = lowest priority (treated as 0). No CPU/memory limits = uncapped fallback.
