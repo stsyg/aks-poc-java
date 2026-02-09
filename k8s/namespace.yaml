@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: petclinic
+  labels:
+    app.kubernetes.io/part-of: spring-petclinic
+    environment: poc

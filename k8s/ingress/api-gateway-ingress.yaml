@@ -1,0 +1,27 @@
+# Ingress for API Gateway via Application Routing (managed NGINX)
+# The IngressClass 'webapprouting-nginx' is provided by the AKS Application Routing add-on.
+# This gives the API Gateway a public IP via Azure Load Balancer.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: api-gateway
+  namespace: petclinic
+  labels:
+    app: api-gateway
+  annotations:
+    # Increase timeouts for Spring Boot startup and load testing
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "30"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "120"
+spec:
+  ingressClassName: webapprouting-nginx
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: api-gateway
+                port:
+                  number: 8080

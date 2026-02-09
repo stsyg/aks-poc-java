@@ -1,0 +1,36 @@
+# KEDA ScaledObject for Visits Service
+# Triggers:
+#   1. CPU utilization at 50% (same as other services)
+#   2. Prometheus HTTP request rate (event-driven scaling demo)
+# KEDA creates and manages the HPA internally — do NOT create a separate HPA.
+# KEDA picks the highest replica count across all triggers.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: visits-service-scaledobject
+  namespace: petclinic
+spec:
+  scaleTargetRef:
+    name: visits-service
+  minReplicaCount: 1
+  maxReplicaCount: 10
+  cooldownPeriod: 60
+  pollingInterval: 15
+  triggers:
+    - type: cpu
+      metricType: Utilization
+      metadata:
+        value: "50"
+    # Prometheus trigger — scales based on HTTP request rate
+    # Requires Azure Monitor Managed Prometheus + TriggerAuthentication
+    # Uncomment after configuring trigger-auth-prometheus.yaml with your
+    # Azure Monitor workspace endpoint.
+    # - type: prometheus
+    #   metadata:
+    #     serverAddress: "${PROMETHEUS_ENDPOINT}"
+    #     query: |
+    #       sum(rate(http_server_requests_seconds_count{app="visits-service"}[2m]))
+    #     threshold: "50"
+    #     activationThreshold: "5"
+    #   authenticationRef:
+    #     name: azure-managed-prometheus-auth

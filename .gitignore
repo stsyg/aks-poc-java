@@ -1,0 +1,38 @@
+# Environment variables (contains subscription ID, random suffix, resource names)
+.env
+
+# Azure CLI
+.azure/
+
+# Kubernetes
+kubeconfig
+*.kubeconfig
+.kube/
+
+# SSH keys
+*.pem
+*.key
+id_rsa*
+
+# Load test results
+load-test-results/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# Java build artifacts (if building locally)
+target/
+*.jar
+*.class
+
+# Terraform (if added later)
+*.tfstate
+*.tfstate.backup
+.terraform/

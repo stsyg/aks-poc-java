@@ -1,0 +1,42 @@
+# Karpenter NodePool: burst-pool
+# Overflow pool for load spikes. Spot-only for maximum cost savings (60-90%).
+# Lower weight (10) = used only when workload-pool can't satisfy demand.
+# Wider SKU selection (D, F, E) increases chance of Spot availability.
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: burst-pool
+spec:
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 30s
+  limits:
+    cpu: "16"
+    memory: 64Gi
+  weight: 10
+  template:
+    spec:
+      nodeClassRef:
+        group: karpenter.azure.com
+        kind: AKSNodeClass
+        name: default
+      expireAfter: Never
+      requirements:
+        - key: kubernetes.io/arch
+          operator: In
+          values: ["amd64"]
+        - key: kubernetes.io/os
+          operator: In
+          values: ["linux"]
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["spot"]
+        - key: karpenter.azure.com/sku-family
+          operator: In
+          values: ["D", "F", "E"]
+        - key: karpenter.azure.com/sku-version
+          operator: In
+          values: ["5"]
+        - key: karpenter.azure.com/sku-cpu
+          operator: Lt
+          values: ["9"]
