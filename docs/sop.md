@@ -605,7 +605,7 @@ Open **4 views** — 2 terminal tabs + Azure Portal + browser:
 
 **Terminal 1 — Pod watcher** (keep open side-by-side):
 ```bash
-watch -n 5 "kubectl top pods -n petclinic 2>/dev/null | head -20; echo '---'; kubectl get pods -n petclinic"
+watch -n 5 "kubectl top pods -n petclinic 2>/dev/null | head -20; echo '---'; kubectl get pods -n petclinic -o wide | awk 'NR==1{printf \"%-45s %-7s %-12s %-8s %s\n\",\"NAME\",\"READY\",\"STATUS\",\"AGE\",\"NODE\"} NR>1{printf \"%-45s %-7s %-12s %-8s %s\n\",\$1,\$2,\$3,\$(NF-4),\$(NF-2)}'"
 ```
 
 This refreshes every 5 seconds and shows two sections separated by `---`:
