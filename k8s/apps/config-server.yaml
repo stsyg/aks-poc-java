@@ -17,6 +17,11 @@ spec:
         app: config-server
         component: infrastructure
     spec:
+      tolerations:
+        - key: workload
+          operator: Equal
+          value: app
+          effect: NoSchedule
       containers:
         - name: config-server
           image: ${ACR_NAME}.azurecr.io/spring-petclinic-config-server:latest

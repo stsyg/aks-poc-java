@@ -17,6 +17,11 @@ spec:
         app: customers-service
         component: backend
     spec:
+      tolerations:
+        - key: workload
+          operator: Equal
+          value: app
+          effect: NoSchedule
       containers:
         - name: customers-service
           image: ${ACR_NAME}.azurecr.io/spring-petclinic-customers-service:latest

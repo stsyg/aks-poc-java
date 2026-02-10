@@ -17,6 +17,11 @@ spec:
         app: vets-service
         component: backend
     spec:
+      tolerations:
+        - key: workload
+          operator: Equal
+          value: app
+          effect: NoSchedule
       containers:
         - name: vets-service
           image: ${ACR_NAME}.azurecr.io/spring-petclinic-vets-service:latest

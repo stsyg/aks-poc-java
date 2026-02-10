@@ -17,6 +17,11 @@ spec:
         app: discovery-server
         component: infrastructure
     spec:
+      tolerations:
+        - key: workload
+          operator: Equal
+          value: app
+          effect: NoSchedule
       containers:
         - name: discovery-server
           image: ${ACR_NAME}.azurecr.io/spring-petclinic-discovery-server:latest

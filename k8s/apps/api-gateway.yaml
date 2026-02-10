@@ -17,6 +17,11 @@ spec:
         app: api-gateway
         component: gateway
     spec:
+      tolerations:
+        - key: workload
+          operator: Equal
+          value: app
+          effect: NoSchedule
       containers:
         - name: api-gateway
           image: ${ACR_NAME}.azurecr.io/spring-petclinic-api-gateway:latest

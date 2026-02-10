@@ -16,6 +16,10 @@ spec:
   weight: 10
   template:
     spec:
+      taints:
+        - key: workload
+          value: app
+          effect: NoSchedule
       nodeClassRef:
         group: karpenter.azure.com
         kind: AKSNodeClass
