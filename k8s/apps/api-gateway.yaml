@@ -47,9 +47,9 @@ spec:
             - name: SPRING_CONFIG_IMPORT
               value: optional:configserver:http://config-server:8888
             - name: SPRING_PROFILES_ACTIVE
-              value: default
-            - name: EUREKA_CLIENT_SERVICEURL_DEFAULTZONE
-              value: http://discovery-server:8761/eureka
+              value: docker
+            - name: EUREKA_INSTANCE_PREFER_IP_ADDRESS
+              value: "true"
 ---
 apiVersion: v1
 kind: Service
