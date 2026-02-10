@@ -441,65 +441,303 @@ Azure Load Testing charges per **Virtual User Hour (VUH)**:
 
 ## 9. Run the Demo — Load Test & Observe Scaling
 
-### 9.1 Set Up Monitoring Views
+> **This section is a step-by-step presenter script.**
+> Read each step aloud, run the commands, and narrate what the audience should observe.
+> Steps marked 🖥️ are terminal commands. Steps marked 🌐 are Azure Portal actions.
 
-Open **3 views** side-by-side for the demo:
+---
 
-**View 1 — Azure Portal**: Azure Load Testing → your test → live dashboard
+### 9.1 Set the Scene — What Are We Looking At?
 
-**View 2 — Terminal (pod watcher)**:
+**Say to the audience:**
+
+> *"We have a realistic Java microservices application — Spring PetClinic — running on a private AKS cluster. It has 6 services: a Config Server for centralized configuration, a Discovery Server (Eureka) for service registration, an API Gateway that serves the web UI, and three backend services — Customers, Vets, and Visits. All container images are pulled from our private Azure Container Registry — nothing comes from the public internet."*
+
+🖥️ **Show the running application:**
+
 ```bash
-kubectl get pods -n petclinic -w
+# Show all pods — 6 services, all Running
+kubectl get pods -n petclinic -o wide
 ```
 
-**View 3 — Terminal (node watcher)**:
+> *"Here are our 6 microservices, each running as a single replica. They're all healthy and registered with Eureka."*
+
+🖥️ **Show the Ingress (public entry point):**
+
 ```bash
-kubectl get nodes -w
+kubectl get ingress -n petclinic
 ```
 
-### 9.2 Start the Load Test
+```bash
+# Get the URL
+INGRESS_IP=$(kubectl get ingress api-gateway -n petclinic -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+echo "App URL: http://$INGRESS_IP"
+```
 
-Click **Run** in Azure Load Testing. Then narrate the scaling chain:
+🌐 **Open the app in the browser** → click **Find Owners** → show data. Then click **Veterinarians** → show the list.
 
-| Time | What Happens | Where to Watch |
-|------|-------------|----------------|
-| ~0s | Load test begins, 250 concurrent users hit the API Gateway | Azure Portal dashboard |
-| ~30s | CPU exceeds 50% → KEDA scales pods from 1 → 2 → 3 | Terminal: pods appearing |
-| ~60s | New pods can't fit on existing nodes → Pending state | Terminal: pods show `Pending` |
-| ~90s | Karpenter selects cheapest VM from workload-pool | — |
-| ~120s | New node becomes Ready → pending pods scheduled | Terminal: new node appears |
-| ~150s | Response times stabilize as capacity catches up | Azure Portal: latency graph |
+> *"This is a real Spring Boot 3 application — not a hello-world. When you clicked 'Find Owners' just now, here's what actually happened: the browser hit the API Gateway, the gateway asked Eureka — our service discovery server — 'where is customers-service right now?', Eureka replied with the pod's current IP address, and the gateway forwarded the request there. The service queried its database and returned the data. That's four hops across three microservices."*
 
-### 9.3 Useful Commands During Demo
+> *"Eureka is like a phonebook for microservices. Every service registers itself on startup — 'I'm customers-service, I'm at IP 10.244.1.5, port 8081.' When pods scale up or restart and get new IPs, Eureka keeps the registry up to date. The gateway never hardcodes addresses — it always asks Eureka."*
+
+> *"The gateway also has circuit breakers — powered by Resilience4j. If a backend service goes down or gets too slow, the circuit breaker trips, like an electrical breaker in your house. Instead of piling up requests and cascading the failure, the gateway immediately returns a fallback response. Once the backend recovers, the circuit closes and normal traffic resumes. It prevents one struggling service from taking down the whole application."*
+
+---
+
+### 9.2 Show the Current Cluster State — "Calm Before the Storm"
+
+🖥️ **Show nodes:**
 
 ```bash
-# Show KEDA ScaledObjects and their current state
-kubectl get scaledobjects -n petclinic
+kubectl get nodes -o custom-columns=\
+'NAME:.metadata.name,SKU:.metadata.labels.node\.kubernetes\.io/instance-type,ZONE:.metadata.labels.topology\.kubernetes\.io/zone,CAPACITY-TYPE:.metadata.labels.karpenter\.sh/capacity-type,AGE:.metadata.creationTimestamp'
+```
 
-# Show HPAs managed by KEDA (current/target replicas)
-kubectl get hpa -n petclinic
+> *"Let me walk you through what's on the screen. There are three types of nodes:"*
 
-# Show Karpenter NodePools and allocated resources
-kubectl get nodepools.karpenter.sh
+> *"**nodepool1** (VMSS) — this is the original system node pool we created with the cluster. It's a Standard_D2s_v5, part of a traditional VM Scale Set. Notice the CAPACITY-TYPE is `<none>` — that's because this node wasn't created by Karpenter, it's a classic AKS node pool. It runs core system workloads."*
 
-# Show node details (VM SKU, zone, capacity type)
-kubectl get nodes -o custom-columns='NAME:.metadata.name,SKU:.metadata.labels.node\.kubernetes\.io/instance-type,ZONE:.metadata.labels.topology\.kubernetes\.io/zone,TYPE:.metadata.labels.karpenter\.sh/capacity-type,AGE:.metadata.creationTimestamp'
+> *"**system-surge** nodes — these were created by Karpenter automatically. The `system-surge` NodePool is managed by NAP and handles overflow for system components like CoreDNS, Cilium, KEDA operator, Azure Policy, etc. Notice they're Standard_D2als_v6 — the 'a' means AMD, the 'l' means low memory — cheapest option for system pods. All on-demand, spread across availability zones."*
 
-# Show resource usage
-kubectl top pods -n petclinic
+> *"**workload-pool** nodes — this is where our PetClinic application runs. Karpenter provisioned these from the workload-pool we defined. Notice the CAPACITY-TYPE is `spot` — these are Spot VMs, 60-90% cheaper than on-demand. Karpenter picked Standard_D2as_v5 because it's the cheapest VM that satisfies our pods' resource requests (250m CPU, 512Mi memory per pod). We didn't tell it to use this exact SKU — Karpenter figured it out."*
+
+🖥️ **Show current resource usage:**
+
+```bash
 kubectl top nodes
 ```
 
-### 9.4 After the Load Test
+```bash
+kubectl top pods -n petclinic --sort-by=cpu
+```
 
-Continue watching for 5-10 minutes after the test ends:
+**What does `m` mean in CPU?**
 
-| Time After Test | What Happens |
-|----------------|-------------|
-| ~1-2 min | CPU drops below threshold → KEDA scales pods back down |
-| ~3-5 min | Nodes become underutilized → Karpenter consolidation begins |
-| ~5-10 min | Karpenter drains pods, cordons node, terminates VM |
-| Final state | Back to minimal nodes (system + 1-2 app nodes) |
+`m` stands for millicores (milli-CPU). It's Kubernetes' way of expressing fractions of a CPU core:
+
+Value	Meaning
+1000m	1 full CPU core
+500m	0.5 cores (half a core)
+250m	0.25 cores (quarter of a core)
+1210m	1.21 cores
+
+> *"CPU usage is low — each service is barely using any CPU. This is our baseline. Let's see what happens when we put this under load."*
+
+---
+
+### 9.3 Explain KEDA — "Here's How Pod Scaling Is Configured"
+
+> *"Before we stress-test, let me show you how autoscaling is set up. We use a two-layer approach: KEDA for pod scaling, and Karpenter (NAP) for node scaling."*
+
+> *"First, KEDA — it stands for Kubernetes Event-Driven Autoscaling. It's an open-source project, and on AKS it's available as a managed add-on. The key thing about KEDA: it extends the built-in Kubernetes HPA (Horizontal Pod Autoscaler). You don't create HPAs yourself — instead you create a ScaledObject, and KEDA manages the HPA for you internally. Never create a standalone HPA alongside a KEDA ScaledObject — they will conflict."*
+
+🖥️ **Show the KEDA ScaledObjects:**
+
+```bash
+kubectl get scaledobjects -n petclinic
+```
+
+> *"We have 4 ScaledObjects — one for each service that handles user traffic. The Config Server and Discovery Server are infrastructure services that don't need to scale."*
+
+🖥️ **Look at one ScaledObject in detail:**
+
+```bash
+kubectl describe scaledobject api-gateway-scaledobject -n petclinic
+```
+
+> *"Here's how KEDA is configured for the API Gateway: it watches CPU utilization with a threshold of 50%. When CPU goes above 50%, KEDA tells the HPA to add more replicas — up to a maximum of 10. The polling interval is 15 seconds, so KEDA checks every 15 seconds. The cooldown period is 60 seconds — meaning it waits at least a minute before scaling back down to avoid flapping (scale up and down too quickly)."*
+
+🖥️ **Show the HPAs that KEDA created:**
+
+```bash
+kubectl get hpa -n petclinic
+```
+
+> *"See these HPAs? We didn't create them. KEDA created and manages them automatically. The TARGETS column shows current CPU vs the 50% threshold. Right now it's well below — the app is idle."*
+
+---
+
+### 9.4 Explain Karpenter (NAP) — "Here's How Node Scaling Is Configured"
+
+> *"Now the second layer — Karpenter. If you've used Karpenter on AWS EKS, this is the same thing. On AKS, Microsoft calls it NAP — Node Autoprovision. Same Karpenter engine, managed by Azure."*
+
+> *"Here's the difference between KEDA and Karpenter in plain English: **KEDA decides HOW MANY pods you need. Karpenter decides WHERE to run them.** When KEDA creates new pods and they can't fit on existing nodes, the pods go to Pending state. Karpenter watches for Pending pods and automatically provisions a new VM — picking the cheapest one that satisfies the pod's CPU and memory requirements."*
+
+🖥️ **Show the Karpenter NodePools with weight and limits:**
+
+```bash
+kubectl get nodepools.karpenter.sh -o custom-columns=\
+'NAME:.metadata.name,WEIGHT:.spec.weight,CPU-LIMIT:.spec.limits.cpu,MEMORY-LIMIT:.spec.limits.memory,NODECLASS:.spec.template.spec.nodeClassRef.name'
+```
+
+> *"We have 4 NodePools. The two that matter for this demo are workload-pool and burst-pool."*
+
+> *"**Weight is the priority** — higher number means Karpenter tries that pool first. workload-pool has weight 50 (higher priority), burst-pool has weight 10 (lower). Think of it this way: workload-pool is our preferred pool for normal traffic; burst-pool is the overflow for spikes."*
+
+🖥️ **Inspect the workload-pool details:**
+
+```bash
+kubectl describe nodepool workload-pool | grep -A 35 'Spec:'
+```
+
+> *"workload-pool allows D and F series v5 VMs, both on-demand and Spot instances, up to 16 CPU cores total across all nodes in this pool. When those 16 cores are full, new pods overflow to burst-pool."*
+
+🖥️ **Inspect the burst-pool details:**
+
+```bash
+kubectl describe nodepool burst-pool | grep -A 35 'Spec:'
+```
+
+> *"burst-pool is Spot-only — that means 60-90% cheaper than on-demand. It accepts a wider range of VM families (D, F, and E) which increases the chance of finding available Spot capacity. It also has a 16-core CPU limit and a shorter consolidation timer — 30 seconds vs 60 seconds — so burst nodes get cleaned up faster when demand drops."*
+
+> *"So the full chain is: Load increases → CPU rises above 50% → KEDA scales pods → pods go Pending if no room → Karpenter picks workload-pool first (weight 50) → if workload-pool is full, overflow to burst-pool (weight 10) → new VM provisioned in about 60-90 seconds."*
+
+---
+
+### 9.5 Set Up Monitoring Views
+
+> *"Now let's set up our monitoring so we can watch the scaling chain in real time."*
+
+Open **4 views** — 2 terminal tabs + Azure Portal + browser:
+
+> **Why `watch` instead of `kubectl -w`?**
+> The Kubernetes `-w` (watch) flag streams an event line every time *any* field on an object changes — including heartbeat updates every ~40 seconds. During a demo this floods the screen with duplicate node/pod names and makes it look like resources are being added when nothing changed. The Linux `watch` command refreshes the whole output cleanly every N seconds — no duplicates, no confusion.
+
+**Terminal 1 — Pod watcher** (keep open side-by-side):
+```bash
+watch -n 5 "kubectl top pods -n petclinic 2>/dev/null | head -20; echo '---'; kubectl get pods -n petclinic"
+```
+
+This refreshes every 5 seconds and shows two sections separated by `---`:
+- **Top half**: CPU and memory usage per pod (sorted by CPU)
+- **Bottom half**: Pod status and readiness (you'll see new pods appear and go from `Pending` → `Running`)
+
+**Terminal 2 — Node watcher** (keep open side-by-side):
+```bash
+watch -n 5 "kubectl top nodes 2>/dev/null; echo '---'; kubectl get nodes -o custom-columns='NAME:.metadata.name,STATUS:.status.conditions[-1:].type,SKU:.metadata.labels.node\.kubernetes\.io/instance-type,CAPACITY-TYPE:.metadata.labels.karpenter\.sh/capacity-type'"
+```
+
+This refreshes every 5 seconds and shows:
+- **Top half**: CPU% and memory% per node — you'll see utilization climb during the test
+- **Bottom half**: Node name, status, VM SKU, and whether it's on-demand or spot — you'll see new nodes appear here when Karpenter provisions them
+
+🌐 **Azure Portal tab**: Navigate to **Azure Load Testing** → your resource (`aks-poc-lt-<suffix>`) → open your test
+
+🌐 **Browser tab**: Keep `http://<INGRESS-IP>` open to show the app is live
+
+> *"We have 4 views: the app in the browser, the pod watcher, the node watcher, and the Azure Load Testing dashboard. Let's add some pressure."*
+
+---
+
+### 9.6 Start the Load Test — "Let's Add Some Pressure"
+
+> *"We're using Azure Load Testing — a fully managed service. We configured a URL-based test: 250 concurrent users hitting two API endpoints — /api/vet/vets and /api/customer/owners — for 5 minutes, with a 30-second ramp-up. Let's see how Karpenter and KEDA handle it."*
+
+🌐 **Azure Portal → Azure Load Testing → your test → click "Run"**
+
+> *"The test is starting. 250 virtual users will ramp up over 30 seconds. Watch the terminals."*
+
+---
+
+### 9.7 Narrate the Scaling Chain — What to Watch For
+
+Follow this timeline and narrate as events appear:
+
+| Time | What's Happening | What to Say | Where to Watch |
+|------|-----------------|-------------|----------------|
+| ~0-30s | Load ramps up, requests hitting API Gateway | *"Users are ramping up. CPU is climbing."* | Azure Portal — response time / throughput graphs |
+| ~30-60s | CPU > 50% → KEDA triggers scaling | *"KEDA detected CPU above 50%. Watch the pod watcher — new pods appearing."* | Terminal 1: new pods go `Pending` → `ContainerCreating` → `Running` |
+| ~60-90s | Pods can't fit → go Pending | *"Some pods are in Pending state — the existing nodes are full. Now Karpenter kicks in."* | Terminal 1: pods showing `Pending` |
+| ~90-120s | Karpenter provisions a new VM | *"Watch Terminal 2 — a new node is appearing. Karpenter picked the cheapest VM from workload-pool."* | Terminal 2: new node goes `NotReady` → `Ready` |
+| ~90-120s | New nodes show `<unknown>` CPU/memory | *"The new nodes show 'unknown' for CPU — that's normal. The metrics-server hasn't scraped them yet. It refreshes every 30-60 seconds."* | Terminal 2: top half shows `<unknown>` for new nodes |
+| ~120-180s | Pending pods land on new node | *"The node is Ready. The Pending pods are now scheduling onto it."* | Terminal 1: `Pending` → `Running` |
+| ~180s+ | System stabilizes | *"Capacity caught up. Response times are stabilizing."* | Azure Portal: latency graph flattening |
+
+**While the test is running**, switch to a free terminal and run these commands to narrate:
+
+🖥️ **Show pod scaling in action:**
+```bash
+kubectl get hpa -n petclinic
+```
+
+> *"Look at the REPLICAS column — KEDA moved the HPA target up. The api-gateway went from 1 replica to 3, customers-service went to 4, etc."*
+
+🖥️ **Show the ScaledObjects:**
+```bash
+kubectl get scaledobjects -n petclinic
+```
+
+> *"All ScaledObjects show ACTIVE=True — KEDA is actively scaling."*
+
+🖥️ **Show CPU and memory under load:**
+```bash
+kubectl top pods -n petclinic --sort-by=cpu
+```
+
+```bash
+kubectl top nodes
+```
+
+> *"You can see CPU usage is much higher now across all pods and nodes."*
+
+🖥️ **Show the nodes with details — which VMs did Karpenter choose?**
+```bash
+kubectl get nodes -o custom-columns=\
+'NAME:.metadata.name,SKU:.metadata.labels.node\.kubernetes\.io/instance-type,ZONE:.metadata.labels.topology\.kubernetes\.io/zone,CAPACITY-TYPE:.metadata.labels.karpenter\.sh/capacity-type,AGE:.metadata.creationTimestamp'
+```
+
+> *"See the new nodes? Karpenter provisioned them from the workload-pool. Notice the SKU column — these are D-series or F-series v5 VMs. The capacity type shows 'on-demand' or 'spot'. Karpenter didn't pick a giant VM — it picked the smallest one that fits our pods, which is cost-efficient."*
+
+🖥️ **Show NodePool resource consumption:**
+```bash
+kubectl get nodepools.karpenter.sh -o custom-columns=\
+'NAME:.metadata.name,WEIGHT:.spec.weight,CPU-LIMIT:.spec.limits.cpu,CPU-USED:.status.resources.cpu,MEMORY-USED:.status.resources.memory'
+```
+
+> *"The workload-pool shows how much CPU and memory is being consumed. If this fills up to the 16-core limit, new pods will overflow to burst-pool (Spot-only, 60-90% cheaper)."*
+
+---
+
+### 9.8 After the Load Test Ends — "Watch the Scale-Down"
+
+> *"The load test is done. Now watch the reverse — the cool-down. This is just as important to demonstrate because it proves we're not wasting money on idle resources."*
+
+Continue watching terminals for 5-10 minutes. Narrate:
+
+| Time After Test | What Happens | What to Say |
+|----------------|-------------|-------------|
+| ~1-2 min | CPU drops below 50% → KEDA scales pods down | *"CPU dropped. KEDA is scaling pods back to 1 replica."* |
+| ~3-5 min | Nodes become underutilized → Karpenter consolidation | *"The nodes are mostly empty now. Karpenter's consolidation policy kicks in."* |
+| ~5-10 min | Karpenter drains pods, terminates VMs | *"Watch Terminal 2 — nodes are disappearing. Karpenter drained the pods, cordoned the node, and terminated the VM. We're no longer paying for it."* |
+| Final state | Back to 1 replica per service, minimal nodes | *"Back to baseline. System scales up automatically under load, scales back down to save money. No manual intervention required."* |
+
+🖥️ **Verify everything scaled back down:**
+```bash
+kubectl get pods -n petclinic
+```
+
+```bash
+kubectl get nodes -o custom-columns=\
+'NAME:.metadata.name,SKU:.metadata.labels.node\.kubernetes\.io/instance-type,CAPACITY-TYPE:.metadata.labels.karpenter\.sh/capacity-type'
+```
+
+```bash
+kubectl get hpa -n petclinic
+```
+
+> *"All back to 1 replica. The extra nodes are gone. Cost goes back to baseline."*
+
+---
+
+### 9.9 Wrap-Up Talking Points
+
+Use these to close the demo:
+
+> - *"**KEDA vs HPA**: KEDA extends HPA — you define a ScaledObject, KEDA manages the HPA for you. Never create a standalone HPA alongside KEDA. KEDA can also scale to zero, which HPA alone cannot do."*
+> - *"**KEDA vs Karpenter**: KEDA handles pod scaling (HOW MANY pods). Karpenter handles node scaling (WHERE to run them). They work together — KEDA creates demand, Karpenter provides capacity."*
+> - *"**NAP vs Cluster Autoscaler**: Cluster Autoscaler requires pre-defined node pools with fixed VM sizes. NAP (Karpenter) picks the right VM type on the fly — cheapest option that satisfies the pod requests. Much more efficient."*
+> - *"**Spot savings**: The burst-pool uses Spot instances — 60-90% cheaper than on-demand. Wider SKU selection (D, F, E families) increases Spot availability. For stateless microservices, Spot is ideal."*
+> - *"**Full chain**: Azure Load Testing → Ingress → 250 users → CPU rises → KEDA scales pods → pods go Pending → Karpenter provisions the cheapest right-sized VM → pods land → response times stabilize. Load drops → reverse happens automatically. No human involved."*
 
 ---
 
