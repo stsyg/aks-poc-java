@@ -447,9 +447,50 @@ Azure Load Testing charges per **Virtual User Hour (VUH)**:
 
 ---
 
+### 9.0 Pre-Demo Cleanup — Remove Stale Nodes
+
+Before running the demo, check for and remove any nodes in **Unknown** state. These are orphaned node objects left behind by Karpenter after VM deallocation (e.g., Spot evictions, consolidation). They are harmless but clutter the Azure Portal's node list and can confuse the audience.
+
+> **Why does this happen?** When Karpenter (NAP) terminates a VM — due to consolidation or Spot eviction — the underlying Azure VM is deleted, but the Kubernetes node object sometimes lingers with `Ready=Unknown` because the kubelet stopped reporting. These stale objects need manual cleanup.
+
+> **Important:** `kubectl get nodes` displays the condition **type** (e.g., "Ready") in the STATUS column, not the condition **value** (True/False/Unknown). A node showing "Ready" in the STATUS column may actually have `Ready=Unknown`. Always use the JSONPath query below to check the actual value.
+
+🖥️ **Check for Unknown nodes:**
+
+```bash
+kubectl get nodes -o custom-columns=\
+'NAME:.metadata.name,READY-STATUS:.status.conditions[?(@.type=="Ready")].status' \
+  | grep -v "True"
+```
+
+If the output only shows the `NAME` / `READY-STATUS` header and nothing else, all nodes are healthy — skip to 9.1.
+
+If you see nodes with `Unknown`, delete them:
+
+🖥️ **Delete all Unknown nodes:**
+
+```bash
+kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}' \
+  | awk '$2=="Unknown"{print $1}' \
+  | xargs -r kubectl delete node
+```
+
+🖥️ **Verify cleanup:**
+
+```bash
+kubectl get nodes -o custom-columns=\
+'NAME:.metadata.name,READY-STATUS:.status.conditions[?(@.type=="Ready")].status,SKU:.metadata.labels.node\.kubernetes\.io/instance-type,POOL:.metadata.labels.karpenter\.sh/nodepool'
+```
+
+All remaining nodes should show `READY-STATUS=True`. Refresh the Azure Portal **Nodes** tab to confirm.
+
+---
+
 ### 9.1 Set the Scene — What Are We Looking At?
 
 **Say to the audience:**
+
+> *"The goal of this demo is to show you how AKS Node Autoprovision — or NAP — works. NAP is Microsoft's managed implementation of Karpenter. If you've used Karpenter on AWS EKS, this is the equivalent experience on Azure. We're going to put a real Java application under load and watch the full autoscaling chain in action: KEDA detecting the load and scaling pods, Karpenter detecting pending pods and provisioning right-sized VMs, and then everything scaling back down when the load stops. You'll see exactly how these components work together, what decisions Karpenter makes, and why this approach is more efficient than the traditional Cluster Autoscaler."*
 
 > *"We have a realistic Java microservices application — Spring PetClinic — running on a private AKS cluster. It has 6 services: a Config Server for centralized configuration, a Discovery Server (Eureka) for service registration, an API Gateway that serves the web UI, and three backend services — Customers, Vets, and Visits. All container images are pulled from our private Azure Container Registry — nothing comes from the public internet."*
 
@@ -468,11 +509,11 @@ kubectl get pods -n petclinic -o wide
 kubectl get ingress -n petclinic
 ```
 
-```bash
+<!-- ```bash
 # Get the URL
 INGRESS_IP=$(kubectl get ingress api-gateway -n petclinic -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
 echo "App URL: http://$INGRESS_IP"
-```
+``` -->
 
 🌐 **Open the app in the browser** → click **Find Owners** → show data. Then click **Veterinarians** → show the list.
 
@@ -503,9 +544,9 @@ kubectl get nodes -o custom-columns=\
 
 🖥️ **Show current resource usage:**
 
-```bash
+<!-- ```bash
 kubectl top nodes
-```
+``` -->
 
 ```bash
 kubectl top pods -n petclinic --sort-by=cpu
@@ -561,7 +602,7 @@ kubectl get hpa -n petclinic
 
 > *"Now the second layer — Karpenter. If you've used Karpenter on AWS EKS, this is the same thing. On AKS, Microsoft calls it NAP — Node Autoprovision. Same Karpenter engine, managed by Azure."*
 
-> *"Here's the difference between KEDA and Karpenter in plain English: **KEDA decides HOW MANY pods you need. Karpenter decides WHERE to run them.** When KEDA creates new pods and they can't fit on existing nodes, the pods go to Pending state. Karpenter watches for Pending pods and automatically provisions a new VM — picking the cheapest one that satisfies the pod's CPU and memory requirements."*
+> *"Here's the difference between KEDA and Karpenter: **KEDA decides HOW MANY pods you need. Karpenter decides WHERE to run them.** When KEDA creates new pods and they can't fit on existing nodes, the pods go to Pending state. Karpenter watches for Pending pods and automatically provisions a new VM — picking the cheapest one that satisfies the pod's CPU and memory requirements."*
 
 🖥️ **Show the Karpenter NodePools with weight and limits:**
 
@@ -600,8 +641,8 @@ kubectl describe nodepool burst-pool | grep -A 35 'Spec:'
 
 Open **4 views** — 2 terminal tabs + Azure Portal + browser:
 
-> **Why `watch` instead of `kubectl -w`?**
-> The Kubernetes `-w` (watch) flag streams an event line every time *any* field on an object changes — including heartbeat updates every ~40 seconds. During a demo this floods the screen with duplicate node/pod names and makes it look like resources are being added when nothing changed. The Linux `watch` command refreshes the whole output cleanly every N seconds — no duplicates, no confusion.
+<!-- > **Why `watch` instead of `kubectl -w`?**
+> The Kubernetes `-w` (watch) flag streams an event line every time *any* field on an object changes — including heartbeat updates every ~40 seconds. During a demo this floods the screen with duplicate node/pod names and makes it look like resources are being added when nothing changed. The Linux `watch` command refreshes the whole output cleanly every N seconds — no duplicates, no confusion. -->
 
 **Terminal 1 — Pod watcher** (keep open side-by-side):
 ```bash
@@ -649,9 +690,6 @@ Follow this timeline and narrate as events appear:
 | ~30-60s | CPU > 50% → KEDA triggers scaling | *"KEDA detected CPU above 50%. Watch the pod watcher — new pods appearing."* | Terminal 1: new pods go `Pending` → `ContainerCreating` → `Running` |
 | ~60-90s | Pods can't fit → go Pending | *"Some pods are in Pending state — the existing nodes are full. Now Karpenter kicks in."* | Terminal 1: pods showing `Pending` |
 | ~90-120s | Karpenter provisions a new VM | *"Watch Terminal 2 — a new node is appearing. Karpenter picked the cheapest VM from workload-pool."* | Terminal 2: new node goes `NotReady` → `Ready` |
-| ~90-120s | New nodes show `<unknown>` CPU/memory | *"The new nodes show 'unknown' for CPU — that's normal. The metrics-server hasn't scraped them yet. It refreshes every 30-60 seconds."* | Terminal 2: top half shows `<unknown>` for new nodes |
-| ~120-180s | Pending pods land on new node | *"The node is Ready. The Pending pods are now scheduling onto it."* | Terminal 1: `Pending` → `Running` |
-| ~180s+ | System stabilizes | *"Capacity caught up. Response times are stabilizing."* | Azure Portal: latency graph flattening |
 
 **While the test is running**, switch to a free terminal and run these commands to narrate:
 
@@ -698,6 +736,12 @@ kubectl get nodepools.karpenter.sh -o custom-columns=\
 
 ---
 
+| Time | What's Happening | What to Say | Where to Watch |
+|------|-----------------|-------------|----------------|
+| ~90-120s | New nodes show `<unknown>` CPU/memory | *"The new nodes show 'unknown' for CPU — that's normal. The metrics-server hasn't scraped them yet. It refreshes every 30-60 seconds."* | Terminal 2: top half shows `<unknown>` for new nodes |
+| ~120-180s | Pending pods land on new node | *"The node is Ready. The Pending pods are now scheduling onto it."* | Terminal 1: `Pending` → `Running` |
+| ~180s+ | System stabilizes | *"Capacity caught up. Response times are stabilizing."* | Azure Portal: latency graph flattening |
+
 ### 9.8 After the Load Test Ends — "Watch the Scale-Down"
 
 > *"The load test is done. Now watch the reverse — the cool-down. This is just as important to demonstrate because it proves we're not wasting money on idle resources."*
@@ -733,11 +777,13 @@ kubectl get hpa -n petclinic
 
 Use these to close the demo:
 
-> - *"**KEDA vs HPA**: KEDA extends HPA — you define a ScaledObject, KEDA manages the HPA for you. Never create a standalone HPA alongside KEDA. KEDA can also scale to zero, which HPA alone cannot do."*
+> - *"**KEDA vs HPA**: KEDA extends HPA — you define a ScaledObject, KEDA manages the HPA for you. You should never create a standalone HPA alongside KEDA. KEDA can also scale to zero, which HPA alone cannot do."*
 > - *"**KEDA vs Karpenter**: KEDA handles pod scaling (HOW MANY pods). Karpenter handles node scaling (WHERE to run them). They work together — KEDA creates demand, Karpenter provides capacity."*
 > - *"**NAP vs Cluster Autoscaler**: Cluster Autoscaler requires pre-defined node pools with fixed VM sizes. NAP (Karpenter) picks the right VM type on the fly — cheapest option that satisfies the pod requests. Much more efficient."*
 > - *"**Spot savings**: The burst-pool uses Spot instances — 60-90% cheaper than on-demand. Wider SKU selection (D, F, E families) increases Spot availability. For stateless microservices, Spot is ideal."*
 > - *"**Full chain**: Azure Load Testing → Ingress → 250 users → CPU rises → KEDA scales pods → pods go Pending → Karpenter provisions the cheapest right-sized VM → pods land → response times stabilize. Load drops → reverse happens automatically. No human involved."*
+
+> *"That's the full story — event-driven pod scaling with KEDA, intelligent node provisioning with Karpenter, and cost optimization with Spot instances. All managed, all automatic, all on AKS."*
 
 ---
 

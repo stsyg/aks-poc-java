@@ -28,5 +28,6 @@
     }
   },
   "postCreateCommand": "echo '=== DevContainer Ready ===' && az version --output table && kubectl version --client --output yaml && java --version && mvn --version && jq --version",
+  "postStartCommand": "bash -c 'if az account show -o none 2>/dev/null && [[ -f .env ]]; then ./scripts/get-credentials.sh; else echo \">>> Skipping kubeconfig fetch (not logged in or .env missing)\"; fi'",
   "remoteUser": "vscode"
 }
